@@ -2,8 +2,11 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net.WebSockets;
+using System.Reflection.Metadata.Ecma335;
 using System.Security.Claims;
 using System.Text;
 
@@ -59,6 +62,45 @@ namespace JwtAuthAPI.Controllers
             });
         }
 
+        [HttpPost("Register")]
+        public async Task<IActionResult> Register([FromBody] Register register)
+        {
+            var userExists = await _userManager.Users.AnyAsync(u => u.UserName == register.Username);
+
+            if (userExists)
+                return BadRequest(new Response { Status = "Error", Message = "User already exists" });
+
+            var newUser = new IdentityUser()
+            {
+                UserName = register.Username,
+                Email = register.Email,
+                SecurityStamp = Guid.NewGuid().ToString()
+            };
+
+            var result = await _userManager.CreateAsync(newUser, register.Password);
+
+            if (result.Succeeded)
+                return CreatedAtAction("GetUserById", new { id = newUser.Id }, newUser);
+
+            var error = result.Errors.FirstOrDefault();
+            var errorMessage = error is null ? "User can not be registered" : error.Description;
+
+            return BadRequest(new Response { Status = "Error", Message = errorMessage });
+                
+        }
+
+        [HttpGet("id")]
+        public async Task<IActionResult> GetUserById(string id)
+        {
+            var user = await _userManager.Users.FirstOrDefaultAsync(u => u.Id == id);
+
+            return user is null ? 
+                BadRequest(new Response { Status = "Error", Message = "USer not found" }) : 
+                Ok(user);
+        }
+
+
+
         private JwtSecurityToken GetToken(List<Claim> userClaims)
         {
             var authSinginKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_conf["JWT:Secret"]));
@@ -68,7 +110,7 @@ namespace JwtAuthAPI.Controllers
                     audience: _conf["JWT:ValidAudience"],
                     expires: DateTime.Now.AddMinutes(1),
                     claims: userClaims,
-                    signingCredentials:new SigningCredentials(authSinginKey, SecurityAlgorithms.Sha256)
+                    signingCredentials:new SigningCredentials(authSinginKey, SecurityAlgorithms.HmacSha256Signature)
                 );
         }
     }
