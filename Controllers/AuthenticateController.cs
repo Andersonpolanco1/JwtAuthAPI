@@ -1,4 +1,5 @@
 ﻿using JwtAuthAPI.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -17,19 +18,23 @@ namespace JwtAuthAPI.Controllers
     public class AuthenticateController : ControllerBase
     {
         private readonly UserManager<IdentityUser> _userManager;
-        private readonly RoleManager<IdentityRole> _roleManager;
+        private readonly SignInManager<IdentityUser> _signInManager;
         private readonly IConfiguration _conf;
 
-        public AuthenticateController(UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IConfiguration conf)
+        public AuthenticateController(UserManager<IdentityUser> userManager, SignInManager<IdentityUser> signInManager, IConfiguration conf)
         {
             _userManager = userManager;
-            _roleManager = roleManager;
+            _signInManager = signInManager;
             _conf = conf;
         }
-
+        [AllowAnonymous]
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] Login login)
         {
+            if (_signInManager.IsSignedIn(User))
+            {
+                return Ok("Already signed in");
+            }
             var user = await _userManager.FindByNameAsync(login.Username);
 
             if (user is null) 
@@ -62,49 +67,18 @@ namespace JwtAuthAPI.Controllers
             });
         }
 
-        [HttpPost("Register")]
-        public async Task<IActionResult> Register([FromBody] Register register)
+        [Authorize]
+        [HttpGet("logout")]
+        public async Task<IActionResult> Logout()
         {
-            var userExists = await _userManager.Users.AnyAsync(u => u.UserName == register.Username);
-
-            if (userExists)
-                return BadRequest(new Response { Status = "Error", Message = "User already exists" });
-
-            var newUser = new IdentityUser()
-            {
-                UserName = register.Username,
-                Email = register.Email,
-                SecurityStamp = Guid.NewGuid().ToString()
-            };
-
-            var result = await _userManager.CreateAsync(newUser, register.Password);
-
-            if (result.Succeeded)
-                return CreatedAtAction("GetUserById", new { id = newUser.Id }, newUser);
-
-            var error = result.Errors.FirstOrDefault();
-            var errorMessage = error is null ? "User can not be registered" : error.Description;
-
-            return BadRequest(new Response { Status = "Error", Message = errorMessage });
-                
+            await _signInManager.SignOutAsync();
+            return Ok();
         }
-
-        [HttpGet("id")]
-        public async Task<IActionResult> GetUserById(string id)
-        {
-            var user = await _userManager.Users.FirstOrDefaultAsync(u => u.Id == id);
-
-            return user is null ? 
-                BadRequest(new Response { Status = "Error", Message = "USer not found" }) : 
-                Ok(user);
-        }
-
-
 
         private JwtSecurityToken GetToken(List<Claim> userClaims)
         {
             var authSinginKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_conf["JWT:Secret"]));
-            return new JwtSecurityToken
+            var jwt = new JwtSecurityToken
                 (
                     issuer: _conf["JWT:ValidIssuer"],
                     audience: _conf["JWT:ValidAudience"],
@@ -112,6 +86,9 @@ namespace JwtAuthAPI.Controllers
                     claims: userClaims,
                     signingCredentials:new SigningCredentials(authSinginKey, SecurityAlgorithms.HmacSha256Signature)
                 );
+
+            return jwt;
+
         }
     }
 }
